@@ -1,0 +1,24 @@
+name: mtop-seed
+
+# Common Crawl indeksidan .uz sahifalar ro'yxatini mtop navbatiga qo'shadi (bir marta qo'lda ishga tushiring, keyin kerak bo'lsa takrorlang).
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Nechta URL qo'shilsin"
+        default: "20000"
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Common Crawl → navbat
+        env:
+          MTOP_URL: ${{ secrets.MTOP_URL }}
+          MTOP_KEY: ${{ secrets.MTOP_KEY }}
+        run: python mtop_worker.py seed-cc --limit "${{ inputs.limit }}"
