@@ -1,0 +1,31 @@
+name: mtop-crawl
+
+# Har 6 soatda ishga tushadi va ~5.5 soat ishlaydi (deyarli uzluksiz). Qo'lda ham ishga tushirish mumkin: Actions → mtop-crawl → Run workflow.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Necha daqiqa ishlasin (eng ko'pi 340)"
+        default: "330"
+
+# Bir vaqtda faqat bitta yig'uvchi ishlasin
+concurrency:
+  group: mtop-crawl
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Yig'ish
+        env:
+          MTOP_URL: ${{ secrets.MTOP_URL }}
+          MTOP_KEY: ${{ secrets.MTOP_KEY }}
+        run: python mtop_worker.py crawl --minutes "${{ inputs.minutes || 330 }}" --threads 12 --delay 1.0
