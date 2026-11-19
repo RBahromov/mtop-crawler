@@ -1,0 +1,21 @@
+name: keepalive
+
+# GitHub ommaviy repozitoriyda 60 kun harakat bo'lmasa jadvalli ishlarni o'chirib qo'yadi. Bu ish har oy bir marta uni qayta yoqadi.
+on:
+  schedule:
+    - cron: "5 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Jadvalli ishlarni qayta yoqish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow enable mtop-crawl.yml --repo "${{ github.repository }}" || true
+          gh workflow enable keepalive.yml --repo "${{ github.repository }}" || true
