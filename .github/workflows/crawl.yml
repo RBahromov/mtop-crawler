@@ -1,6 +1,6 @@
 name: mtop-crawl
 
-# Har 6 soatda ishga tushadi va ~5.5 soat ishlaydi (deyarli uzluksiz). Qo'lda ham ishga tushirish mumkin: Actions → mtop-crawl → Run workflow.
+# Har 6 soatda ishga tushadi va ~5.5 soat ishlaydi (deyarli uzluksiz), 3 ta parallel yig'uvchi. Qo'lda ham ishga tushirish mumkin: Actions → mtop-crawl → Run workflow.
 on:
   schedule:
     - cron: "17 */6 * * *"
@@ -10,13 +10,16 @@ on:
         description: "Necha daqiqa ishlasin (eng ko'pi 340)"
         default: "330"
 
-# Bir vaqtda faqat bitta yig'uvchi ishlasin
-concurrency:
-  group: mtop-crawl
-  cancel-in-progress: false
-
 jobs:
   crawl:
+    # 3 ta parallel yig'uvchi (ochiq repoda daqiqa cheksiz). Hosting yukini baribir ingest.php limiti belgilaydi.
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [1, 2, 3]
+    concurrency:
+      group: mtop-crawl-${{ matrix.worker }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
