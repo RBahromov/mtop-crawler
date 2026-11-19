@@ -58,7 +58,9 @@ class Api:
     def call(self, op: str, **payload) -> dict:
         body = gzip.compress(json.dumps({"op": op, **payload}, ensure_ascii=False).encode())
         last = ""
-        for attempt in range(4):
+        busy = 0
+        attempt = 0
+        while attempt < 4:
             ts = str(int(time.time()))
             sig = hmac.new(self.key, (ts + "\n" + hashlib.sha256(body).hexdigest()).encode(), hashlib.sha256).hexdigest()
             req = urllib.request.Request(self.url, data=body, method="POST", headers={
@@ -70,12 +72,23 @@ class Api:
                     return json.loads(r.read().decode("utf-8", "replace"))
             except urllib.error.HTTPError as e:
                 txt = e.read().decode("utf-8", "replace")[:300]
+                if e.code == 429:                       # hosting band — kutib qayta uriniladi (xato emas)
+                    try:
+                        wait = float(e.headers.get("Retry-After", "5"))
+                    except ValueError:
+                        wait = 5.0
+                    busy += 1
+                    if busy > 40:
+                        raise RuntimeError("hosting uzoq vaqt band")
+                    time.sleep(wait + random.random() * 3)
+                    continue
                 if e.code in (401, 403, 405, 503):
                     raise SystemExit(f"Hosting rad etdi (HTTP {e.code}): {txt}")
                 last = f"HTTP {e.code} {txt}"
             except Exception as e:  # tarmoq xatosi
                 last = str(e)
             time.sleep(2 ** attempt * 2)
+            attempt += 1
         raise RuntimeError("hosting javob bermadi: " + last)
 
 
@@ -251,6 +264,10 @@ def cmd_crawl(api: Api, a):
         while time.time() < deadline:
             res = api.call("claim", n=a.batch)
             jobs = res.get("jobs", [])
+            if not jobs and res.get("wait"):
+                log(f"hosting tezlik chegarasi: {res['wait']} soniya kutiladi")
+                time.sleep(min(70, float(res["wait"])) + random.random() * 2)
+                continue
             if not jobs:
                 idle_since = idle_since or time.time()
                 if time.time() - idle_since > a.idle * 60:
