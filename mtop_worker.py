@@ -393,6 +393,101 @@ def cmd_stats(api: Api, a):
     print(json.dumps(api.call("stats"), ensure_ascii=False, indent=2))
 
 
+# ---------------- xarita: OpenStreetMap joylari ----------------
+GEOFABRIK = "https://download.geofabrik.de/asia/uzbekistan-latest.osm.pbf"
+
+# (tag, qiymat) -> mtop joy turi
+OSM_CATS = {
+    ("amenity", "pharmacy"): "pharmacy", ("shop", "chemist"): "pharmacy",
+    ("amenity", "bank"): "bank", ("amenity", "atm"): "atm",
+    ("amenity", "restaurant"): "restaurant", ("amenity", "cafe"): "cafe", ("amenity", "fast_food"): "fast_food",
+    ("amenity", "hospital"): "hospital", ("amenity", "clinic"): "clinic", ("amenity", "doctors"): "clinic",
+    ("amenity", "dentist"): "dentist", ("amenity", "school"): "school", ("amenity", "kindergarten"): "kindergarten",
+    ("amenity", "university"): "university", ("amenity", "college"): "university",
+    ("amenity", "fuel"): "fuel", ("shop", "supermarket"): "supermarket", ("shop", "convenience"): "supermarket",
+    ("shop", "mall"): "mall", ("amenity", "marketplace"): "market",
+    ("tourism", "hotel"): "hotel", ("tourism", "hostel"): "hotel", ("tourism", "guest_house"): "hotel",
+    ("amenity", "place_of_worship"): "mosque", ("leisure", "park"): "park", ("tourism", "museum"): "museum",
+    ("amenity", "police"): "police", ("amenity", "post_office"): "post", ("shop", "car_repair"): "car_repair",
+    ("shop", "hairdresser"): "beauty", ("shop", "beauty"): "beauty", ("leisure", "fitness_centre"): "gym",
+    ("amenity", "cinema"): "cinema", ("amenity", "bus_station"): "bus_station", ("railway", "station"): "railway",
+    ("aeroway", "terminal"): "airport", ("shop", "bakery"): "bakery", ("shop", "pastry"): "bakery",
+    ("shop", "clothes"): "clothes", ("shop", "electronics"): "electronics", ("shop", "mobile_phone"): "electronics",
+    ("shop", "books"): "books", ("amenity", "library"): "library", ("amenity", "townhall"): "government",
+    ("office", "government"): "government",
+}
+
+
+def place_cat(tags) -> str:
+    for (k, v), cat in OSM_CATS.items():
+        if tags.get(k) == v:
+            if cat == "mosque" and tags.get("religion", "muslim") != "muslim":
+                return ""
+            return cat
+    return ""
+
+
+def place_item(key: str, tags, lat: float, lon: float):
+    cat = place_cat(tags)
+    name = tags.get("name:uz") or tags.get("name") or tags.get("name:ru") or ""
+    if not cat or not name:
+        return None
+    street = tags.get("addr:street", "")
+    addr = ", ".join(x for x in [tags.get("addr:city", ""), street + (" " + tags.get("addr:housenumber", "") if street else "")] if x.strip())
+    return {"k": key, "name": name, "cat": cat, "lat": round(lat, 6), "lon": round(lon, 6), "addr": addr,
+            "phone": tags.get("phone") or tags.get("contact:phone") or "", "web": tags.get("website") or tags.get("contact:website") or "",
+            "hours": tags.get("opening_hours") or ""}
+
+
+def cmd_places(api: Api, a):
+    try:
+        import osmium  # pip install osmium
+    except ImportError:
+        sys.exit("pip install osmium kerak")
+    path = a.file
+    if not path:
+        path = "uzbekistan-latest.osm.pbf"
+        log("Geofabrik'dan yuklanmoqda ...")
+        urllib.request.urlretrieve(GEOFABRIK, path)
+    batch: list = []
+    stat = {"sent": 0, "total": 0}
+
+    def flush():
+        if batch:
+            r = api.call("places", items=batch)
+            if r.get("paused"):
+                sys.exit("hosting baza kvotasi to'lgan — import to'xtatildi: " + str(r.get("paused")))
+            time.sleep(1.5)                      # hostingga yuk tushmasligi uchun
+            stat["sent"] += int(r.get("saved", 0))
+            stat["total"] = int(r.get("total", 0))
+            batch.clear()
+
+    class H(osmium.SimpleHandler):
+        def node(self, n):
+            if n.tags.get("name") or n.tags.get("name:uz"):
+                it = place_item("n%d" % n.id, n.tags, n.location.lat, n.location.lon) if n.location.valid() else None
+                if it:
+                    batch.append(it)
+                    if len(batch) >= 500:
+                        flush()
+
+        def way(self, w):
+            if not (w.tags.get("name") or w.tags.get("name:uz")) or not place_cat(w.tags):
+                return
+            pts = [(n.lat, n.lon) for n in w.nodes if n.location.valid()]
+            if not pts:
+                return
+            it = place_item("w%d" % w.id, w.tags, sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+            if it:
+                batch.append(it)
+                if len(batch) >= 500:
+                    flush()
+
+    H().apply_file(path, locations=True)
+    flush()
+    log(f"xarita: {stat['sent']} joy yuborildi, bazada jami {stat['total']}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -408,13 +503,15 @@ def main():
     s.add_argument("--cdx", default="", help="sinov uchun: CDX API manzili")
     f = sub.add_parser("seed-file")
     f.add_argument("file")
+    pl = sub.add_parser("places")
+    pl.add_argument("--file", default="", help="tayyor .osm.pbf/.osm fayl (bo'sh bo'lsa Geofabrik'dan yuklanadi)")
     sub.add_parser("stats")
     a = ap.parse_args()
     base, key = os.environ.get("MTOP_URL", ""), os.environ.get("MTOP_KEY", "")
     if not base or not key:
         sys.exit("MTOP_URL va MTOP_KEY muhit o'zgaruvchilari kerak")
     api = Api(base, key)
-    {"crawl": cmd_crawl, "seed-cc": cmd_seed_cc, "seed-file": cmd_seed_file, "stats": cmd_stats}[a.cmd](api, a)
+    {"crawl": cmd_crawl, "seed-cc": cmd_seed_cc, "seed-file": cmd_seed_file, "stats": cmd_stats, "places": cmd_places}[a.cmd](api, a)
 
 
 if __name__ == "__main__":
